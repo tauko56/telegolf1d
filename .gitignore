@@ -1,7 +1,5 @@
-.env
-*.env
-secrets/
-keys/
+*.db
 __pycache__/
 *.pyc
-*.db
+.env
+config.json
