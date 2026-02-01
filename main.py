@@ -169,6 +169,25 @@ def get_game_info(game_code):
     conn.close()
     return game
 
+def parse_datetime(dt_str):
+    """Универсальный парсер даты с поддержкой микросекунд"""
+    if not dt_str:
+        return None
+    try:
+        # Пробуем парсить с микросекундами
+        return datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S.%f')
+    except ValueError:
+        # Пробуем парсить без микросекунд
+        try:
+            return datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            # Пробуем парсить только дату
+            try:
+                return datetime.strptime(dt_str, '%Y-%m-%d')
+            except ValueError:
+                print(f"⚠️ Не удалось распарсить дату: {dt_str}")
+                return None
+
 def update_player_stats(telegram_id, username, first_name, game_code):
     """Обновление статистики игрока после завершения игры"""
     conn = sqlite3.connect('golf_league.db')
@@ -204,7 +223,7 @@ def update_player_stats(telegram_id, username, first_name, game_code):
           telegram_id, telegram_id, telegram_id, total_shots,
           telegram_id, holes_completed,
           total_shots, telegram_id, total_shots, telegram_id,
-          datetime.now()))
+          datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     
     conn.commit()
     conn.close()
@@ -381,16 +400,19 @@ def api_get_game():
     game = cursor.fetchone()
     
     if not game:
+        conn.close()
         return jsonify({'error': 'Игра не найдена'}), 404
     
     game_code, telegram_id, player_name, difficulty, current_hole, status, expires_at = game
     
-    # Проверяем, не истекла ли игра
-    if expires_at and datetime.strptime(expires_at, '%Y-%m-%d %H:%M:%S') < datetime.now():
-        cursor.execute('UPDATE games SET status = "expired" WHERE game_code = ?', (game_code,))
-        conn.commit()
-        conn.close()
-        return jsonify({'error': 'Игра истекла'}), 410
+    # Проверяем, не истекла ли игра с использованием универсального парсера
+    if expires_at:
+        expires_datetime = parse_datetime(expires_at)
+        if expires_datetime and expires_datetime < datetime.now():
+            cursor.execute('UPDATE games SET status = "expired" WHERE game_code = ?', (game_code,))
+            conn.commit()
+            conn.close()
+            return jsonify({'error': 'Игра истекла'}), 410
     
     # Если игра в статусе pending, переводим в active
     if status == 'pending':
@@ -398,7 +420,7 @@ def api_get_game():
             UPDATE games 
             SET status = 'active', started_at = ?
             WHERE game_code = ?
-        ''', (datetime.now(), game_code))
+        ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), game_code))
         status = 'active'
     
     conn.commit()
@@ -417,7 +439,7 @@ def api_get_game():
             UPDATE games 
             SET status = 'completed', completed_at = ?
             WHERE game_code = ?
-        ''', (datetime.now(), game_code))
+        ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), game_code))
         conn.commit()
         conn.close()
         return jsonify({
@@ -531,7 +553,7 @@ def api_submit_shot():
                     UPDATE games 
                     SET status = 'completed', current_hole = ?, completed_at = ?
                     WHERE game_code = ?
-                ''', (next_hole, datetime.now(), game_code))
+                ''', (next_hole, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), game_code))
                 
                 # Получаем статистику игрока для обновления
                 cursor.execute('SELECT username, first_name FROM player_stats WHERE telegram_id = ?', (telegram_id,))
@@ -620,8 +642,8 @@ def setup_telegram_bot():
         # Генерируем код игры
         game_code = generate_game_code()
         
-        # Устанавливаем время истечения игры
-        expires_at = datetime.now() + timedelta(hours=GAME_EXPIRE_HOURS)
+        # Устанавливаем время истечения игры (в виде строки без микросекунд)
+        expires_at = (datetime.now() + timedelta(hours=GAME_EXPIRE_HOURS)).strftime('%Y-%m-%d %H:%M:%S')
         
         conn = sqlite3.connect('golf_league.db')
         cursor = conn.cursor()
@@ -692,10 +714,13 @@ def setup_telegram_bot():
             avg_score_result = cursor.fetchone()[0]
             avg_score = f"{avg_score_result:.1f}" if avg_score_result else "Нет данных"
             
-            # Форматируем дату последней игры
+            # Форматируем дату последней игры с использованием универсального парсера
             if last_played:
-                last_played_date = datetime.strptime(last_played, '%Y-%m-%d %H:%M:%S')
-                last_played_str = last_played_date.strftime("%d.%m.%Y %H:%M")
+                last_played_date = parse_datetime(last_played)
+                if last_played_date:
+                    last_played_str = last_played_date.strftime("%d.%m.%Y %H:%M")
+                else:
+                    last_played_str = "Неизвестно"
             else:
                 last_played_str = "Еще не играли"
             
@@ -866,7 +891,8 @@ def setup_telegram_bot():
                 users_text = "<b>👥 Последние 10 игроков</b>\n\n"
                 
                 for i, (first_name, total_games, best_score, last_played) in enumerate(users, 1):
-                    last_played_date = datetime.strptime(last_played, '%Y-%m-%d %H:%M:%S') if last_played else None
+                    # Используем универсальный парсер для даты
+                    last_played_date = parse_datetime(last_played) if last_played else None
                     last_played_str = last_played_date.strftime("%d.%m.%Y") if last_played_date else "Никогда"
                     
                     users_text += f"{i}. {first_name}: {total_games} игр, лучший: {best_score if best_score != 999 else 'Нет'}, последняя: {last_played_str}\n"
