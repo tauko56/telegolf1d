@@ -287,10 +287,11 @@ def api_get_game():
             conn.close()
             return jsonify({'error': 'Игра истекла'}), 410
     
-    # Если игра в статусе pending, переводим в active
-    if status == 'pending':
-        # Устанавливаем начальный остаток для первой лунки
-        target = GOLF_HOLES[current_hole - 1]
+    # Получаем цель для текущей лунки
+    target = GOLF_HOLES[current_hole - 1]
+    
+    # Если игра в статусе pending или remaining равно 0 (начало лунки), устанавливаем remaining = target
+    if status == 'pending' or remaining == 0:
         cursor.execute('''
             UPDATE games 
             SET status = 'active', started_at = ?, remaining = ?
@@ -336,7 +337,8 @@ def api_get_game():
         'tolerance': tolerance,
         'current_hole': current_hole,
         'total_holes': len(GOLF_HOLES),
-        'remaining': remaining,
+        'target': target,  # Полная дистанция лунки
+        'remaining': remaining,  # Остаток до лунки
         'total_shots': total_shots,
         'status': status
     })
@@ -395,7 +397,11 @@ def api_submit_shot():
         remaining_before = remaining
         
         # УПРОЩЕННАЯ МЕХАНИКА: вычитаем брошенные обороты из оставшегося расстояния
-        remaining_after = max(0, remaining_before - revolutions)
+        if revolutions > remaining_before:
+            # Если крутили больше чем оставалось - это перекрут
+            remaining_after = 0
+        else:
+            remaining_after = remaining_before - revolutions
         
         # Проверяем успешность: если остаток ≤ tolerance, лунка завершена
         is_success = remaining_after <= tolerance
@@ -522,16 +528,16 @@ def setup_telegram_bot():
         expires_at = (datetime.now() + timedelta(hours=GAME_EXPIRE_HOURS)).strftime('%Y-%m-%d %H:%M:%S')
         
         # Устанавливаем начальный остаток для первой лунки
-        initial_remaining = GOLF_HOLES[0]
+        first_hole_distance = GOLF_HOLES[0]
         
         conn = sqlite3.connect('golf_league.db')
         cursor = conn.cursor()
         
-        # Создаем новую игру
+        # Создаем новую игру с remaining = дистанция первой лунки
         cursor.execute('''
             INSERT INTO games (game_code, telegram_id, player_name, difficulty, expires_at, remaining)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (game_code, user.id, user.first_name, 1, expires_at, initial_remaining))
+        ''', (game_code, user.id, user.first_name, 1, expires_at, first_hole_distance))
         
         conn.commit()
         conn.close()
@@ -553,11 +559,13 @@ def setup_telegram_bot():
 ⏰ <b>Код действителен:</b> {GAME_EXPIRE_HOURS} часов
 🎯 <b>Сложность:</b> Новичок (tolerance = 10)
 🏌️ <b>Количество лунок:</b> {len(GOLF_HOLES)}
+⛳ <b>Первая лунка:</b> {first_hole_distance} оборотов
 
-<b>Упрощенная механика:</b>
-• Лунка 1: 100 оборотов
-• Крутите спиннер, чтобы уменьшить расстояние
-• Лунка завершена, когда остаток ≤ 10
+<b>Механика игры:</b>
+• Лунка 1: {first_hole_distance} оборотов
+• Крутите спиннер, чтобы уменьшить расстояние до лунки
+• Лунка завершена, когда остаток ≤ 10 оборотов
+• Чем меньше бросков, тем лучше результат!
 
 Удачи! 🚀
         """
@@ -690,5 +698,5 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     print(f"🚀 Flask сервер запущен на порту {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
-
+    
 
