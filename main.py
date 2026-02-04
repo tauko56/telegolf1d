@@ -358,7 +358,7 @@ def api_submit_shot():
         if not game_code:
             return jsonify({'error': 'Требуется код игры'}), 400
         
-        if not isinstance(revolutions, int) or revolutions <= 0:
+        if not isinstance(revolutions, int) or revolutions < 0:
             return jsonify({'error': 'Некорректное количество оборотов'}), 400
         
         conn = sqlite3.connect('golf_league.db')
