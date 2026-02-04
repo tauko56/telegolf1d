@@ -54,7 +54,7 @@ GAME_EXPIRE_HOURS = 24
 
 # ==================== БАЗА ДАННЫХ ====================
 def init_database():
-    conn = sqlite3.connect('golf_league.db')
+    conn = sqlite3.connect('golf_league.db', check_same_thread=False)
     cursor = conn.cursor()
     
     # Таблица игр
@@ -136,7 +136,7 @@ def generate_game_code():
     """Генерация уникального 6-значного кода игры"""
     while True:
         code = ''.join(random.choices(string.ascii_uppercase, k=6))
-        conn = sqlite3.connect('golf_league.db')
+        conn = sqlite3.connect('golf_league.db', check_same_thread=False)
         cursor = conn.cursor()
         cursor.execute('SELECT game_code FROM games WHERE game_code = ?', (code,))
         if not cursor.fetchone():
@@ -162,36 +162,40 @@ def parse_datetime(dt_str):
 
 def update_player_stats(telegram_id, username, first_name, game_code):
     """Обновление статистики игрока"""
-    conn = sqlite3.connect('golf_league.db')
+    conn = sqlite3.connect('golf_league.db', check_same_thread=False)
     cursor = conn.cursor()
     
-    # Получаем количество бросков в игре
-    cursor.execute('SELECT COUNT(*) FROM shots WHERE game_code = ?', (game_code,))
-    total_shots = cursor.fetchone()[0] or 0
-    
-    # Обновляем статистику игрока
-    cursor.execute('''
-        INSERT OR REPLACE INTO player_stats 
-        (telegram_id, username, first_name, total_games, completed_games, 
-         total_shots, best_score, last_played)
-        VALUES (?, ?, ?, 
-            COALESCE((SELECT total_games + 1 FROM player_stats WHERE telegram_id = ?), 1),
-            COALESCE((SELECT completed_games + 1 FROM player_stats WHERE telegram_id = ?), 1),
-            COALESCE((SELECT total_shots FROM player_stats WHERE telegram_id = ?), 0) + ?,
-            CASE 
-                WHEN ? < COALESCE((SELECT best_score FROM player_stats WHERE telegram_id = ?), 999) 
-                THEN ? 
-                ELSE COALESCE((SELECT best_score FROM player_stats WHERE telegram_id = ?), 999)
-            END,
-            ?
-        )
-    ''', (telegram_id, username, first_name, 
-          telegram_id, telegram_id, telegram_id, total_shots,
-          total_shots, telegram_id, total_shots, telegram_id,
-          datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-    
-    conn.commit()
-    conn.close()
+    try:
+        # Получаем количество бросков в игре
+        cursor.execute('SELECT COUNT(*) FROM shots WHERE game_code = ?', (game_code,))
+        total_shots = cursor.fetchone()[0] or 0
+        
+        # Обновляем статистику игрока
+        cursor.execute('''
+            INSERT OR REPLACE INTO player_stats 
+            (telegram_id, username, first_name, total_games, completed_games, 
+             total_shots, best_score, last_played)
+            VALUES (?, ?, ?, 
+                COALESCE((SELECT total_games + 1 FROM player_stats WHERE telegram_id = ?), 1),
+                COALESCE((SELECT completed_games + 1 FROM player_stats WHERE telegram_id = ?), 1),
+                COALESCE((SELECT total_shots FROM player_stats WHERE telegram_id = ?), 0) + ?,
+                CASE 
+                    WHEN ? < COALESCE((SELECT best_score FROM player_stats WHERE telegram_id = ?), 999) 
+                    THEN ? 
+                    ELSE COALESCE((SELECT best_score FROM player_stats WHERE telegram_id = ?), 999)
+                END,
+                ?
+            )
+        ''', (telegram_id, username, first_name, 
+              telegram_id, telegram_id, telegram_id, total_shots,
+              total_shots, telegram_id, total_shots, telegram_id,
+              datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        
+        conn.commit()
+    except Exception as e:
+        print(f"❌ Ошибка обновления статистики: {e}")
+    finally:
+        conn.close()
 
 # ==================== API ДЛЯ ESP32 ====================
 @app.route('/')
@@ -247,7 +251,7 @@ def api_status():
     """Проверка статуса сервера"""
     return jsonify({
         'status': 'ok',
-        'server': 'Spinner Golf',
+        'server': 'Spinner Golf v3.3',
         'timestamp': datetime.now().isoformat()
     })
 
@@ -259,94 +263,98 @@ def api_get_game():
     if not game_code:
         return jsonify({'error': 'Требуется код игры'}), 400
     
-    conn = sqlite3.connect('golf_league.db')
+    conn = sqlite3.connect('golf_league.db', check_same_thread=False)
     cursor = conn.cursor()
     
-    # Проверяем существование игры
-    cursor.execute('''
-        SELECT game_code, player_name, difficulty, current_hole, 
-               remaining, status, expires_at, total_shots
-        FROM games 
-        WHERE game_code = ?
-    ''', (game_code,))
-    
-    game = cursor.fetchone()
-    
-    if not game:
-        conn.close()
-        return jsonify({'error': 'Игра не найдена'}), 404
-    
-    game_code, player_name, difficulty, current_hole, remaining, status, expires_at, total_shots = game
-    
-    # Проверяем, не истекла ли игра
-    if expires_at:
-        expires_datetime = parse_datetime(expires_at)
-        if expires_datetime and expires_datetime < datetime.now():
-            cursor.execute('UPDATE games SET status = "expired" WHERE game_code = ?', (game_code,))
-            conn.commit()
-            conn.close()
-            return jsonify({'error': 'Игра истекла'}), 410
-    
-    # Получаем цель для текущей лунки
-    target = GOLF_HOLES[current_hole - 1]
-    
-    # Если игра в статусе pending или remaining равно 0 (начало лунки), устанавливаем remaining = target
-    if status == 'pending' or remaining == 0:
+    try:
+        # Проверяем существование игры
         cursor.execute('''
-            UPDATE games 
-            SET status = 'active', started_at = ?, remaining = ?
+            SELECT game_code, player_name, difficulty, current_hole, 
+                   remaining, status, expires_at, total_shots
+            FROM games 
             WHERE game_code = ?
-        ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), target, game_code))
-        remaining = target
-        status = 'active'
-    
-    conn.commit()
-    
-    # Если игра завершена
-    if status == 'completed':
-        conn.close()
-        return jsonify({
-            'game_completed': True,
-            'message': 'Игра завершена! Начните новую игру.'
-        })
-    
-    # Если текущая лунка превышает количество лунок
-    if current_hole > len(GOLF_HOLES):
-        cursor.execute('''
-            UPDATE games 
-            SET status = 'completed', completed_at = ?
-            WHERE game_code = ?
-        ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), game_code))
+        ''', (game_code,))
+        
+        game = cursor.fetchone()
+        
+        if not game:
+            return jsonify({'error': 'Игра не найдена'}), 404
+        
+        game_code, player_name, difficulty, current_hole, remaining, status, expires_at, total_shots = game
+        
+        # Проверяем, не истекла ли игра
+        if expires_at:
+            expires_datetime = parse_datetime(expires_at)
+            if expires_datetime and expires_datetime < datetime.now():
+                cursor.execute('UPDATE games SET status = "expired" WHERE game_code = ?', (game_code,))
+                conn.commit()
+                return jsonify({'error': 'Игра истекла'}), 410
+        
+        # Получаем цель для текущей лунки
+        target = GOLF_HOLES[current_hole - 1] if current_hole <= len(GOLF_HOLES) else 100
+        
+        # Если игра в статусе pending или remaining равно 0 (начало лунки), устанавливаем remaining = target
+        if status == 'pending' or remaining == 0:
+            cursor.execute('''
+                UPDATE games 
+                SET status = 'active', started_at = ?, remaining = ?
+                WHERE game_code = ?
+            ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), target, game_code))
+            remaining = target
+            status = 'active'
+        
         conn.commit()
-        conn.close()
+        
+        # Если игра завершена
+        if status == 'completed':
+            return jsonify({
+                'game_completed': True,
+                'message': 'Игра завершена! Начните новую игру.'
+            })
+        
+        # Если текущая лунка превышает количество лунок
+        if current_hole > len(GOLF_HOLES):
+            cursor.execute('''
+                UPDATE games 
+                SET status = 'completed', completed_at = ?
+                WHERE game_code = ?
+            ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), game_code))
+            conn.commit()
+            return jsonify({
+                'game_completed': True,
+                'message': 'Игра завершена! Поздравляем!'
+            })
+        
+        # Получаем параметры сложности
+        tolerance = DIFFICULTY_LEVELS.get(difficulty, DIFFICULTY_LEVELS[1])["tolerance"]
+        
         return jsonify({
-            'game_completed': True,
-            'message': 'Игра завершена! Поздравляем!'
+            'success': True,
+            'game_code': game_code,
+            'player_name': player_name,
+            'difficulty': difficulty,
+            'tolerance': tolerance,
+            'current_hole': current_hole,
+            'total_holes': len(GOLF_HOLES),
+            'target': target,
+            'remaining': remaining,
+            'total_shots': total_shots,
+            'status': status
         })
-    
-    # Получаем параметры сложности
-    tolerance = DIFFICULTY_LEVELS.get(difficulty, DIFFICULTY_LEVELS[1])["tolerance"]
-    
-    conn.close()
-    
-    return jsonify({
-        'success': True,
-        'game_code': game_code,
-        'player_name': player_name,
-        'difficulty': difficulty,
-        'tolerance': tolerance,
-        'current_hole': current_hole,
-        'total_holes': len(GOLF_HOLES),
-        'target': target,  # Полная дистанция лунки
-        'remaining': remaining,  # Остаток до лунки
-        'total_shots': total_shots,
-        'status': status
-    })
+        
+    except Exception as e:
+        print(f"❌ Ошибка в get_game: {e}")
+        return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
+    finally:
+        conn.close()
 
 @app.route('/api/submit_shot', methods=['POST'])
 def api_submit_shot():
     """Прием результатов броска от ESP32 - УПРОЩЕННАЯ МЕХАНИКА"""
     try:
+        # Убедимся, что база данных инициализирована
+        init_database()
+        
         data = request.json
         if not data:
             return jsonify({'error': 'Нет данных'}), 400
@@ -358,136 +366,154 @@ def api_submit_shot():
         if not game_code:
             return jsonify({'error': 'Требуется код игры'}), 400
         
+        # ИЗМЕНЕНИЕ: разрешаем 0 оборотов (заменили <= 0 на < 0)
         if not isinstance(revolutions, int) or revolutions < 0:
             return jsonify({'error': 'Некорректное количество оборотов'}), 400
         
-        conn = sqlite3.connect('golf_league.db')
+        conn = sqlite3.connect('golf_league.db', check_same_thread=False)
         cursor = conn.cursor()
         
-        # Получаем данные игры
-        cursor.execute('''
-            SELECT difficulty, current_hole, remaining, status, telegram_id, total_shots
-            FROM games 
-            WHERE game_code = ?
-        ''', (game_code,))
-        
-        game = cursor.fetchone()
-        
-        if not game:
-            conn.close()
-            return jsonify({'error': 'Игра не найдена'}), 404
-        
-        difficulty, current_hole, remaining, status, telegram_id, total_shots = game
-        
-        # Проверяем статус игры
-        if status != 'active':
-            conn.close()
-            return jsonify({'error': f'Игра не активна (статус: {status})'}), 400
-        
-        # Проверяем, что лунка существует
-        if current_hole > len(GOLF_HOLES):
-            conn.close()
-            return jsonify({'error': 'Игра уже завершена'}), 400
-        
-        # Получаем цель текущей лунки и толеранс
-        target = GOLF_HOLES[current_hole - 1]
-        tolerance = DIFFICULTY_LEVELS.get(difficulty, DIFFICULTY_LEVELS[1])["tolerance"]
-        
-        # Сохраняем остаток до броска
-        remaining_before = remaining
-        
-        # УПРОЩЕННАЯ МЕХАНИКА: вычитаем брошенные обороты из оставшегося расстояния
-        if revolutions > remaining_before:
-            # Если крутили больше чем оставалось - это перекрут
-            remaining_after = 0
-        else:
-            remaining_after = remaining_before - revolutions
-        
-        # Проверяем успешность: если остаток ≤ tolerance, лунка завершена
-        is_success = remaining_after <= tolerance
-        
-        # Сохраняем бросок в базу
-        cursor.execute('''
-            INSERT INTO shots (game_code, device_id, hole_number, revolutions, 
-                              remaining_before, remaining_after, is_success)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (game_code, device_id, current_hole, revolutions, 
-              remaining_before, remaining_after, is_success))
-        
-        # Увеличиваем счетчик бросков
-        total_shots += 1
-        
-        if is_success:
-            # Лунка завершена!
-            next_hole = current_hole + 1
-            
-            if next_hole <= len(GOLF_HOLES):
-                # Переходим к следующей лунке
-                next_target = GOLF_HOLES[next_hole - 1]
-                cursor.execute('''
-                    UPDATE games 
-                    SET current_hole = ?, remaining = ?, total_shots = ?
-                    WHERE game_code = ?
-                ''', (next_hole, next_target, total_shots, game_code))
-                
-                response = {
-                    'status': 'hole_completed',
-                    'message': f'🎉 Лунка {current_hole} завершена!',
-                    'next_hole': next_hole,
-                    'next_target': next_target,
-                    'remaining': 0,
-                    'is_success': True
-                }
-            else:
-                # Игра завершена
-                cursor.execute('''
-                    UPDATE games 
-                    SET status = 'completed', completed_at = ?, total_shots = ?
-                    WHERE game_code = ?
-                ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), total_shots, game_code))
-                
-                # Обновляем статистику игрока
-                cursor.execute('SELECT username, first_name FROM player_stats WHERE telegram_id = ?', (telegram_id,))
-                player = cursor.fetchone()
-                username = player[0] if player else None
-                first_name = player[1] if player else "Игрок"
-                
-                update_player_stats(telegram_id, username, first_name, game_code)
-                
-                # Добавляем в лидерборд
-                cursor.execute('''
-                    INSERT INTO leaderboard (telegram_id, game_code, total_score, difficulty)
-                    VALUES (?, ?, ?, ?)
-                ''', (telegram_id, game_code, total_shots, difficulty))
-                
-                response = {
-                    'status': 'game_completed',
-                    'message': '🏆 Игра завершена! Отличная игра!',
-                    'total_holes': len(GOLF_HOLES),
-                    'total_shots': total_shots,
-                    'is_success': True
-                }
-        else:
-            # Продолжаем текущую лунку
+        try:
+            # Получаем данные игры с блокировкой строки
             cursor.execute('''
-                UPDATE games 
-                SET remaining = ?, total_shots = ?
+                SELECT difficulty, current_hole, remaining, status, telegram_id, total_shots
+                FROM games 
                 WHERE game_code = ?
-            ''', (remaining_after, total_shots, game_code))
+            ''', (game_code,))
             
-            response = {
-                'status': 'continue',
-                'message': f'📊 Осталось: {remaining_after} из {target} (±{tolerance})',
-                'remaining': remaining_after,
-                'is_success': False
-            }
-        
-        conn.commit()
-        conn.close()
-        return jsonify(response)
-        
+            game = cursor.fetchone()
+            
+            if not game:
+                return jsonify({'error': 'Игра не найдена'}), 404
+            
+            difficulty, current_hole, remaining, status, telegram_id, total_shots = game
+            
+            # Проверяем статус игры
+            if status != 'active':
+                return jsonify({'error': f'Игра не активна (статус: {status})'}), 400
+            
+            # Проверяем, что лунка существует
+            if current_hole > len(GOLF_HOLES):
+                return jsonify({'error': 'Игра уже завершена'}), 400
+            
+            # Получаем цель текущей лунки и толеранс
+            target = GOLF_HOLES[current_hole - 1] if current_hole <= len(GOLF_HOLES) else 100
+            tolerance = DIFFICULTY_LEVELS.get(difficulty, DIFFICULTY_LEVELS[1])["tolerance"]
+            
+            # Сохраняем остаток до броска
+            remaining_before = remaining
+            
+            # УПРОЩЕННАЯ МЕХАНИКА: вычитаем брошенные обороты из оставшегося расстояния
+            if revolutions > remaining_before:
+                # Если крутили больше чем оставалось - это перекрут
+                remaining_after = 0
+            else:
+                remaining_after = remaining_before - revolutions
+            
+            # Проверяем успешность: если остаток ≤ tolerance, лунка завершена
+            is_success = remaining_after <= tolerance
+            
+            # Сохраняем бросок в базу
+            cursor.execute('''
+                INSERT INTO shots (game_code, device_id, hole_number, revolutions, 
+                                  remaining_before, remaining_after, is_success)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (game_code, device_id, current_hole, revolutions, 
+                  remaining_before, remaining_after, is_success))
+            
+            # Увеличиваем счетчик бросков
+            total_shots += 1
+            
+            if is_success:
+                # Лунка завершена!
+                next_hole = current_hole + 1
+                
+                if next_hole <= len(GOLF_HOLES):
+                    # Переходим к следующей лунке
+                    next_target = GOLF_HOLES[next_hole - 1]
+                    cursor.execute('''
+                        UPDATE games 
+                        SET current_hole = ?, remaining = ?, total_shots = ?
+                        WHERE game_code = ?
+                    ''', (next_hole, next_target, total_shots, game_code))
+                    
+                    response = {
+                        'status': 'hole_completed',
+                        'message': f'🎉 Лунка {current_hole} завершена!',
+                        'next_hole': next_hole,
+                        'next_target': next_target,
+                        'remaining': 0,
+                        'is_success': True
+                    }
+                else:
+                    # Игра завершена
+                    cursor.execute('''
+                        UPDATE games 
+                        SET status = 'completed', completed_at = ?, total_shots = ?
+                        WHERE game_code = ?
+                    ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), total_shots, game_code))
+                    
+                    # Обновляем статистику игрока
+                    cursor.execute('SELECT username, first_name FROM player_stats WHERE telegram_id = ?', (telegram_id,))
+                    player = cursor.fetchone()
+                    username = player[0] if player else None
+                    first_name = player[1] if player else "Игрок"
+                    
+                    update_player_stats(telegram_id, username, first_name, game_code)
+                    
+                    # Добавляем в лидерборд
+                    try:
+                        cursor.execute('''
+                            INSERT INTO leaderboard (telegram_id, game_code, total_score, difficulty)
+                            VALUES (?, ?, ?, ?)
+                        ''', (telegram_id, game_code, total_shots, difficulty))
+                    except Exception as e:
+                        print(f"⚠️ Ошибка добавления в лидерборд: {e}")
+                    
+                    response = {
+                        'status': 'game_completed',
+                        'message': '🏆 Игра завершена! Отличная игра!',
+                        'total_holes': len(GOLF_HOLES),
+                        'total_shots': total_shots,
+                        'is_success': True
+                    }
+            else:
+                # Продолжаем текущую лунку
+                cursor.execute('''
+                    UPDATE games 
+                    SET remaining = ?, total_shots = ?
+                    WHERE game_code = ?
+                ''', (remaining_after, total_shots, game_code))
+                
+                response = {
+                    'status': 'continue',
+                    'message': f'📊 Осталось: {remaining_after} из {target} (±{tolerance})',
+                    'remaining': remaining_after,
+                    'is_success': False
+                }
+            
+            conn.commit()
+            return jsonify(response)
+            
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e):
+                print("⚠️ База данных заблокирована, пробуем еще раз...")
+                time.sleep(0.5)  # Ждем полсекунды
+                # Пробуем еще раз
+                conn.close()
+                time.sleep(0.5)
+                return api_submit_shot()  # Рекурсивный вызов
+            else:
+                raise e
+                
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"❌ Критическая ошибка в submit_shot: {e}")
+        return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
 # ==================== TELEGRAM БОТ ====================
 def setup_telegram_bot():
@@ -530,7 +556,7 @@ def setup_telegram_bot():
         # Устанавливаем начальный остаток для первой лунки
         first_hole_distance = GOLF_HOLES[0]
         
-        conn = sqlite3.connect('golf_league.db')
+        conn = sqlite3.connect('golf_league.db', check_same_thread=False)
         cursor = conn.cursor()
         
         # Создаем новую игру с remaining = дистанция первой лунки
@@ -576,7 +602,7 @@ def setup_telegram_bot():
     def show_stats(message):
         user = message.from_user
         
-        conn = sqlite3.connect('golf_league.db')
+        conn = sqlite3.connect('golf_league.db', check_same_thread=False)
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -632,7 +658,7 @@ def setup_telegram_bot():
     
     @bot.message_handler(commands=['leaderboard'])
     def show_leaderboard(message):
-        conn = sqlite3.connect('golf_league.db')
+        conn = sqlite3.connect('golf_league.db', check_same_thread=False)
         cursor = conn.cursor()
         
         cursor.execute('''
