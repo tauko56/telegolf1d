@@ -14,12 +14,12 @@ import time
 app = Flask(__name__)
 CORS(app)
 
-# ==================== НАСТРОЙКИ ====================
+# ==================== SETTINGS ====================
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 if not TELEGRAM_TOKEN:
-    print("❌ ОШИБКА: TELEGRAM_TOKEN не установлен!")
+    print("❌ ERROR: TELEGRAM_TOKEN not set!")
 
-# ID администраторов
+# Admin IDs
 ADMIN_IDS = []
 admin_ids_str = os.environ.get('ADMIN_IDS', '')
 if admin_ids_str:
@@ -27,36 +27,36 @@ if admin_ids_str:
         ADMIN_IDS = [int(id.strip()) for id in admin_ids_str.split(',')]
     except:
         ADMIN_IDS = []
-        print("⚠️ Не удалось распарсить ADMIN_IDS")
+        print("⚠️ Could not parse ADMIN_IDS")
 
-# URL сервера
+# Server URL
 SERVER_URL = os.environ.get('SERVER_URL', 'https://telegolf1d.onrender.com')
 
-# Инициализация бота
+# Initialize bot
 bot = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
 
-# ==================== ИГРОВЫЕ ПАРАМЕТРЫ ====================
-# Дистанции до лунок
+# ==================== GAME PARAMETERS ====================
+# Hole distances
 GOLF_HOLES = [100, 150, 200, 120, 180, 90, 160, 210, 130, 
               140, 170, 110, 190, 125, 140, 160, 195, 105]
 
-# Уровни сложности (толеранс)
+# Difficulty levels (tolerance)
 DIFFICULTY_LEVELS = {
-    1: {"name": "Новичок", "tolerance": 10},
-    2: {"name": "Любитель", "tolerance": 7},
-    3: {"name": "Профи", "tolerance": 5},
-    4: {"name": "Мастер", "tolerance": 3}
+    1: {"name": "Novice", "tolerance": 10},
+    2: {"name": "Amateur", "tolerance": 7},
+    3: {"name": "Pro", "tolerance": 5},
+    4: {"name": "Master", "tolerance": 3}
 }
 
-# Время жизни игры
+# Game expiration time
 GAME_EXPIRE_HOURS = 24
 
-# ==================== БАЗА ДАННЫХ ====================
+# ==================== DATABASE ====================
 def init_database():
     conn = sqlite3.connect('golf_league.db', check_same_thread=False)
     cursor = conn.cursor()
     
-    # Таблица игр
+    # Games table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS games (
             game_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +77,7 @@ def init_database():
         )
     ''')
     
-    # Таблица бросков
+    # Shots table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS shots (
             shot_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,7 +93,7 @@ def init_database():
         )
     ''')
     
-    # Таблица статистики
+    # Player stats table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS player_stats (
             player_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,7 +109,7 @@ def init_database():
         )
     ''')
     
-    # Таблица лидерборда
+    # Leaderboard table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS leaderboard (
             record_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,18 +123,18 @@ def init_database():
         )
     ''')
     
-    # Индексы
+    # Indexes
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_games_code ON games(game_code)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_games_telegram ON games(telegram_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_shots_code ON shots(game_code)')
     
     conn.commit()
     conn.close()
-    print("✅ База данных инициализирована")
+    print("✅ Database initialized")
 
-# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+# ==================== HELPER FUNCTIONS ====================
 def generate_game_code():
-    """Генерация уникального 6-значного кода игры"""
+    """Generate unique 6-character game code"""
     while True:
         code = ''.join(random.choices(string.ascii_uppercase, k=6))
         conn = sqlite3.connect('golf_league.db', check_same_thread=False)
@@ -146,7 +146,7 @@ def generate_game_code():
         conn.close()
 
 def parse_datetime(dt_str):
-    """Универсальный парсер даты"""
+    """Universal datetime parser"""
     if not dt_str:
         return None
     try:
@@ -158,20 +158,20 @@ def parse_datetime(dt_str):
             try:
                 return datetime.strptime(dt_str, '%Y-%m-%d')
             except ValueError:
-                print(f"⚠️ Не удалось распарсить дату: {dt_str}")
+                print(f"⚠️ Could not parse date: {dt_str}")
                 return None
 
 def update_player_stats(telegram_id, username, first_name, game_code):
-    """Обновление статистики игрока"""
+    """Update player statistics"""
     conn = sqlite3.connect('golf_league.db', check_same_thread=False)
     cursor = conn.cursor()
     
     try:
-        # Получаем количество бросков в игре
+        # Get number of shots in game
         cursor.execute('SELECT COUNT(*) FROM shots WHERE game_code = ?', (game_code,))
         total_shots = cursor.fetchone()[0] or 0
         
-        # Обновляем статистику игрока
+        # Update player stats
         cursor.execute('''
             INSERT OR REPLACE INTO player_stats 
             (telegram_id, username, first_name, total_games, completed_games, 
@@ -194,19 +194,19 @@ def update_player_stats(telegram_id, username, first_name, game_code):
         
         conn.commit()
     except Exception as e:
-        print(f"❌ Ошибка обновления статистики: {e}")
+        print(f"❌ Error updating stats: {e}")
     finally:
         conn.close()
 
 def send_telegram_update(game_code, message_type, data):
-    """Отправляет уведомления в Telegram о ключевых событиях"""
+    """Send Telegram notifications for key events"""
     if not bot:
         return
     
     conn = sqlite3.connect('golf_league.db', check_same_thread=False)
     cursor = conn.cursor()
     
-    # Получаем информацию об игре
+    # Get game info
     cursor.execute('''
         SELECT telegram_id, player_name, current_hole, total_shots, difficulty
         FROM games WHERE game_code = ?
@@ -220,36 +220,36 @@ def send_telegram_update(game_code, message_type, data):
     
     telegram_id, player_name, current_hole, total_shots, difficulty = game
     
-    # Формируем сообщение в зависимости от типа события
+    # Form message based on event type
     if message_type == 'hole_completed':
         tolerance = DIFFICULTY_LEVELS.get(difficulty, DIFFICULTY_LEVELS[1])["tolerance"]
         message = f"""
-🎉 <b>Лунка пройдена!</b>
+🎉 <b>Hole completed!</b>
 
-🕳️ <b>Лунка:</b> {data['hole_number']}
-🎯 <b>Ширина лунки:</b> ±{tolerance}
-🏌️ <b>Ударов на лунке:</b> {data['shots_on_hole']}
-🏆 <b>Всего ударов:</b> {total_shots}
+🕳️ <b>Hole:</b> {data['hole_number']}
+🎯 <b>Hole width:</b> ±{tolerance}
+🏌️ <b>Shots on hole:</b> {data['shots_on_hole']}
+🏆 <b>Total shots:</b> {total_shots}
 
-📏 <b>Следующая лунка:</b> {data['next_hole_distance']} оборотов
+📏 <b>Next hole:</b> {data['next_hole_distance']} revolutions
 
-🌐 <b>Следить онлайн:</b>
+🌐 <b>Track online:</b>
 {SERVER_URL}/game/{game_code}
 """
     elif message_type == 'game_completed':
         message = f"""
-🏆 <b>ИГРА ЗАВЕРШЕНА!</b>
+🏆 <b>GAME COMPLETED!</b>
 
-🎮 <b>Финальный результат:</b>
-🕳️ Пройдено лунок: 18
-🏌️ Общее количество ударов: {total_shots}
+🎮 <b>Final result:</b>
+🕳️ Holes completed: 18
+🏌️ Total shots: {total_shots}
 
-🎯 <b>Поздравляем, {player_name}!</b>
+🎯 <b>Congratulations, {player_name}!</b>
 
-📊 <b>Посмотреть статистику:</b> /stats
-🎮 <b>Начать новую игру:</b> /play
+📊 <b>View statistics:</b> /stats
+🎮 <b>Start new game:</b> /play
 
-🌐 <b>Итоговая страница:</b>
+🌐 <b>Final page:</b>
 {SERVER_URL}/game/{game_code}
 """
     else:
@@ -259,19 +259,19 @@ def send_telegram_update(game_code, message_type, data):
     try:
         bot.send_message(telegram_id, message, parse_mode='HTML')
     except Exception as e:
-        print(f"⚠️ Ошибка отправки уведомления в Telegram: {e}")
+        print(f"⚠️ Telegram notification error: {e}")
     
     conn.close()
 
-# ==================== API ДЛЯ ESP32 ====================
+# ==================== ESP32 API ====================
 @app.route('/')
 def home():
-    """Главная страница сервера"""
+    """Server home page"""
     return '''
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Spinner Golf - Сервер</title>
+        <title>Spinner Golf - Server</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -372,85 +372,85 @@ def home():
     <body>
         <div class="container">
             <div class="header">
-                <h1>🏌️ Spinner Golf - Сервер v3.4</h1>
+                <h1>🏌️ Spinner Golf - Server v3.4</h1>
                 <div class="status-badge">
-                    🟢 Сервер работает | 
-                    <span class="telegram-status">🤖 Telegram бот: ''' + ('Активен' if TELEGRAM_TOKEN else 'Не настроен') + '''</span>
+                    🟢 Server is running | 
+                    <span class="telegram-status">🤖 Telegram bot: ''' + ('Active' if TELEGRAM_TOKEN else 'Not configured') + '''</span>
                 </div>
             </div>
             
             <div class="card">
-                <h3>🎮 Как играть:</h3>
+                <h3>🎮 How to play:</h3>
                 <div class="feature-grid">
                     <div class="feature">
                         <div class="feature-icon">🤖</div>
-                        <h4>1. Найти бота</h4>
-                        <p>Найдите в Telegram бота <code>@spinner_golf_bot</code></p>
+                        <h4>1. Find bot</h4>
+                        <p>Find bot in Telegram <code>@spinner_golf_bot</code></p>
                     </div>
                     <div class="feature">
                         <div class="feature-icon">🎯</div>
-                        <h4>2. Начать игру</h4>
-                        <p>Отправьте команду <code>/play</code></p>
+                        <h4>2. Start game</h4>
+                        <p>Send command <code>/play</code></p>
                     </div>
                     <div class="feature">
                         <div class="feature-icon">📱</div>
-                        <h4>3. Настроить ESP32</h4>
-                        <p>Введите код и выберите сложность</p>
+                        <h4>3. Configure ESP32</h4>
+                        <p>Enter code and select difficulty</p>
                     </div>
                     <div class="feature">
                         <div class="feature-icon">🌐</div>
-                        <h4>4. Следить онлайн</h4>
-                        <p>Откройте ссылку для отслеживания</p>
+                        <h4>4. Track online</h4>
+                        <p>Open tracking link</p>
                     </div>
                 </div>
             </div>
             
             <div class="card">
-                <h3>🎯 Уровни сложности:</h3>
+                <h3>🎯 Difficulty levels:</h3>
                 <div class="feature-grid">
                     <div class="feature">
-                        <h4>🥳 Новичок</h4>
-                        <p>Ширина лунки: ±10 оборотов</p>
+                        <h4>🥳 Novice</h4>
+                        <p>Hole width: ±10 revolutions</p>
                     </div>
                     <div class="feature">
-                        <h4>😊 Любитель</h4>
-                        <p>Ширина лунки: ±7 оборотов</p>
+                        <h4>😊 Amateur</h4>
+                        <p>Hole width: ±7 revolutions</p>
                     </div>
                     <div class="feature">
-                        <h4>🤔 Профи</h4>
-                        <p>Ширина лунки: ±5 оборотов</p>
+                        <h4>🤔 Pro</h4>
+                        <p>Hole width: ±5 revolutions</p>
                     </div>
                     <div class="feature">
-                        <h4>😎 Мастер</h4>
-                        <p>Ширина лунки: ±3 оборота</p>
+                        <h4>😎 Master</h4>
+                        <p>Hole width: ±3 revolutions</p>
                     </div>
                 </div>
             </div>
             
             <div class="card">
-                <h3>📡 API для ESP32:</h3>
-                <p><strong>Эндпоинты:</strong></p>
+                <h3>📡 API for ESP32:</h3>
+                <p><strong>Endpoints:</strong></p>
                 <div class="api-link">POST /api/handle_request</div>
-                <p>Основной эндпоинт для всех запросов</p>
+                <p>Main endpoint for all requests</p>
                 
                 <div class="api-link">GET /api/status</div>
-                <p>Проверить статус сервера</p>
+                <p>Check server status</p>
             </div>
             
             <div class="card">
-                <h3>🔗 Полезные ссылки:</h3>
-                <a href="https://t.me/spinner_golf_bot" class="btn" target="_blank">🤖 Telegram бот</a>
-                <a href="/api/status" class="btn" target="_blank">📡 Проверить API</a>
+                <h3>🔗 Useful links:</h3>
+                <a href="https://t.me/spinner_golf_bot" class="btn" target="_blank">🤖 Telegram bot</a>
+                <a href="/api/status" class="btn" target="_blank">📡 Check API</a>
                 
-                <h4 style="margin-top: 20px;">📱 Отслеживание игры:</h4>
-                <p>После начала игры вы получите ссылку вида:</p>
+                <h4 style="margin-top: 20px;">📱 Game tracking:</h4>
+                <p>After starting game you'll get link like:</p>
                 <div class="api-link">''' + SERVER_URL + '''/game/ABC123</div>
-                <p>Поделитесь этой ссылкой с друзьями!</p>
+                <p>Share this link with friends!</p>
             </div>
             
             <div style="text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
-                <p>Spinner Golf v3.4 | Упрощенный одномерный гольф с выбором сложности</p>
-                <p style="color: #666; font-size: 0.9em;">Сервер автоматически обновляется каждые 10 секунд</p>
+                <p>Spinner Golf v3.4 | Simplified one-dimensional golf with difficulty choice</p>
+                <p style="color: #666; font-size: 0.9em;">Server automatically updates every 10 seconds</p>
             </div>
         </div>
     </body>
@@ -459,7 +459,7 @@ def home():
 
 @app.route('/api/status')
 def api_status():
-    """Проверка статуса сервера"""
+    """Check server status"""
     return jsonify({
         'status': 'ok',
         'server': 'Spinner Golf v3.4',
@@ -468,13 +468,13 @@ def api_status():
 
 @app.route('/api/handle_request', methods=['POST'])
 def handle_request():
-    """Основной обработчик всех запросов от ESP32"""
+    """Main handler for all ESP32 requests"""
     try:
         init_database()
         
         data = request.json
         if not data:
-            return jsonify({'error': 'Нет данных'}), 400
+            return jsonify({'error': 'No data'}), 400
         
         game_code = data.get('game_code', '').upper().strip()
         revolutions = data.get('revolutions', 0)
@@ -483,29 +483,29 @@ def handle_request():
         request_type = data.get('request_type', 'shot')
         
         if not game_code:
-            return jsonify({'error': 'Требуется код игры'}), 400
+            return jsonify({'error': 'Game code required'}), 400
         
-        # Если запрос информационный (revolutions == 0)
+        # If informational request (revolutions == 0)
         if request_type == 'info' or revolutions == 0:
             return handle_info_request(game_code, difficulty)
         else:
-            # Запрос броска
+            # Shot request
             if not isinstance(revolutions, int) or revolutions < 0:
-                return jsonify({'error': 'Некорректное количество оборотов'}), 400
+                return jsonify({'error': 'Invalid revolutions count'}), 400
             
             return handle_shot_request(game_code, revolutions, device_id, difficulty)
             
     except Exception as e:
-        print(f"❌ Критическая ошибка в handle_request: {e}")
-        return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
+        print(f"❌ Critical error in handle_request: {e}")
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 def handle_info_request(game_code, difficulty):
-    """Обработка информационного запроса"""
+    """Handle informational request"""
     conn = sqlite3.connect('golf_league.db', check_same_thread=False)
     cursor = conn.cursor()
     
     try:
-        # Проверяем существование игры
+        # Check if game exists
         cursor.execute('''
             SELECT game_code, player_name, difficulty, current_hole, 
                    remaining, status, total_shots, shots_on_current_hole
@@ -516,12 +516,12 @@ def handle_info_request(game_code, difficulty):
         game = cursor.fetchone()
         
         if not game:
-            return jsonify({'error': 'Игра не найдена'}), 404
+            return jsonify({'error': 'Game not found'}), 404
         
         (game_code_db, player_name, current_difficulty, current_hole, 
          remaining, status, total_shots, shots_on_hole) = game
         
-        # Если игра в pending и передана новая сложность - обновляем
+        # If game in pending and new difficulty provided - update
         if status == 'pending' and 1 <= difficulty <= 4:
             cursor.execute('''
                 UPDATE games SET difficulty = ? WHERE game_code = ?
@@ -529,7 +529,7 @@ def handle_info_request(game_code, difficulty):
             current_difficulty = difficulty
             conn.commit()
         
-        # Проверяем, не истекла ли игра
+        # Check if game expired
         cursor.execute('SELECT expires_at FROM games WHERE game_code = ?', (game_code,))
         expires_at = cursor.fetchone()[0]
         if expires_at:
@@ -537,15 +537,15 @@ def handle_info_request(game_code, difficulty):
             if expires_datetime and expires_datetime < datetime.now():
                 cursor.execute('UPDATE games SET status = "expired" WHERE game_code = ?', (game_code,))
                 conn.commit()
-                return jsonify({'error': 'Игра истекла'}), 410
+                return jsonify({'error': 'Game expired'}), 410
         
-        # Получаем цель для текущей лунки
+        # Get target for current hole
         if current_hole <= len(GOLF_HOLES):
             target = GOLF_HOLES[current_hole - 1]
         else:
             target = 0
         
-        # Если игра в статусе pending или remaining равно 0, устанавливаем remaining = target
+        # If game in pending status or remaining is 0, set remaining = target
         if status == 'pending' or remaining == 0:
             cursor.execute('''
                 UPDATE games 
@@ -556,7 +556,7 @@ def handle_info_request(game_code, difficulty):
             status = 'active'
             conn.commit()
         
-        # Получаем параметры сложности
+        # Get difficulty parameters
         tolerance = DIFFICULTY_LEVELS.get(current_difficulty, DIFFICULTY_LEVELS[1])["tolerance"]
         difficulty_name = DIFFICULTY_LEVELS.get(current_difficulty, DIFFICULTY_LEVELS[1])["name"]
         
@@ -575,22 +575,22 @@ def handle_info_request(game_code, difficulty):
             'total_shots': total_shots,
             'shots_on_hole': shots_on_hole,
             'status': status,
-            'message': f'Лунка {current_hole}: цель {target} оборотов. Ширина лунки: ±{tolerance}'
+            'message': f'Hole {current_hole}: target {target} revolutions. Hole width: ±{tolerance}'
         })
         
     except Exception as e:
-        print(f"❌ Ошибка в handle_info_request: {e}")
-        return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
+        print(f"❌ Error in handle_info_request: {e}")
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
     finally:
         conn.close()
 
 def handle_shot_request(game_code, revolutions, device_id, difficulty):
-    """Обработка запроса броска"""
+    """Handle shot request"""
     conn = sqlite3.connect('golf_league.db', check_same_thread=False)
     cursor = conn.cursor()
     
     try:
-        # Получаем данные игры с блокировкой строки
+        # Get game data with row lock
         cursor.execute('''
             SELECT difficulty, current_hole, remaining, status, 
                    telegram_id, total_shots, shots_on_current_hole
@@ -601,36 +601,36 @@ def handle_shot_request(game_code, revolutions, device_id, difficulty):
         game = cursor.fetchone()
         
         if not game:
-            return jsonify({'error': 'Игра не найдена'}), 404
+            return jsonify({'error': 'Game not found'}), 404
         
         (current_difficulty, current_hole, remaining, status, 
          telegram_id, total_shots, shots_on_hole) = game
         
-        # Проверяем статус игры
+        # Check game status
         if status != 'active':
-            return jsonify({'error': f'Игра не активна (статус: {status})'}), 400
+            return jsonify({'error': f'Game not active (status: {status})'}), 400
         
-        # Проверяем, что лунка существует
+        # Check if hole exists
         if current_hole > len(GOLF_HOLES):
-            return jsonify({'error': 'Игра уже завершена'}), 400
+            return jsonify({'error': 'Game already completed'}), 400
         
-        # Получаем цель текущей лунки и толеранс
+        # Get current hole target and tolerance
         target = GOLF_HOLES[current_hole - 1] if current_hole <= len(GOLF_HOLES) else 100
         tolerance = DIFFICULTY_LEVELS.get(current_difficulty, DIFFICULTY_LEVELS[1])["tolerance"]
         
-        # Увеличиваем счетчик ударов
+        # Increase shot counters
         total_shots += 1
         shots_on_hole += 1
         
-        # Сохраняем остаток до броска
+        # Save remaining before shot
         remaining_before = remaining
         
-        # Вычисляем новый остаток
+        # Calculate new remaining
         new_remaining = remaining_before - revolutions
         if new_remaining < 0:
             new_remaining = 0
         
-        # Сохраняем бросок в базу
+        # Save shot to database
         cursor.execute('''
             INSERT INTO shots (game_code, device_id, hole_number, revolutions, 
                               remaining_before, remaining_after, is_success)
@@ -638,20 +638,20 @@ def handle_shot_request(game_code, revolutions, device_id, difficulty):
         ''', (game_code, device_id, current_hole, revolutions, 
               remaining_before, new_remaining, new_remaining <= tolerance))
         
-        # Обновляем счетчики ударов
+        # Update shot counters
         cursor.execute('''
             UPDATE games 
             SET total_shots = ?, shots_on_current_hole = ?
             WHERE game_code = ?
         ''', (total_shots, shots_on_hole, game_code))
         
-        # Проверяем успешность: если остаток ≤ tolerance, лунка завершена
+        # Check success: if remaining ≤ tolerance, hole completed
         if new_remaining <= tolerance:
-            # Лунка завершена!
+            # Hole completed!
             next_hole = current_hole + 1
             
             if next_hole <= len(GOLF_HOLES):
-                # Переходим к следующей лунке
+                # Move to next hole
                 next_target = GOLF_HOLES[next_hole - 1]
                 
                 cursor.execute('''
@@ -661,7 +661,7 @@ def handle_shot_request(game_code, revolutions, device_id, difficulty):
                     WHERE game_code = ?
                 ''', (next_hole, next_target, game_code))
                 
-                # Отправляем уведомление в Telegram
+                # Send Telegram notification
                 send_telegram_update(game_code, 'hole_completed', {
                     'hole_number': current_hole,
                     'shots_on_hole': shots_on_hole,
@@ -670,7 +670,7 @@ def handle_shot_request(game_code, revolutions, device_id, difficulty):
                 
                 response = {
                     'status': 'hole_completed',
-                    'message': f'🎉 Лунка {current_hole} пройдена за {shots_on_hole} ударов!',
+                    'message': f'🎉 Hole {current_hole} completed in {shots_on_hole} shots!',
                     'current_hole': current_hole,
                     'next_hole': next_hole,
                     'next_hole_distance': next_target,
@@ -680,45 +680,45 @@ def handle_shot_request(game_code, revolutions, device_id, difficulty):
                     'is_success': True
                 }
             else:
-                # Игра завершена
+                # Game completed
                 cursor.execute('''
                     UPDATE games 
                     SET status = 'completed', completed_at = ?, remaining = 0
                     WHERE game_code = ?
                 ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), game_code))
                 
-                # Обновляем статистику игрока
+                # Update player stats
                 cursor.execute('SELECT username, first_name FROM player_stats WHERE telegram_id = ?', (telegram_id,))
                 player = cursor.fetchone()
                 username = player[0] if player else None
-                first_name = player[1] if player else "Игрок"
+                first_name = player[1] if player else "Player"
                 
                 update_player_stats(telegram_id, username, first_name, game_code)
                 
-                # Добавляем в лидерборд
+                # Add to leaderboard
                 try:
                     cursor.execute('''
                         INSERT INTO leaderboard (telegram_id, game_code, total_score, difficulty)
                         VALUES (?, ?, ?, ?)
                     ''', (telegram_id, game_code, total_shots, current_difficulty))
                 except Exception as e:
-                    print(f"⚠️ Ошибка добавления в лидерборд: {e}")
+                    print(f"⚠️ Leaderboard addition error: {e}")
                 
-                # Отправляем уведомление в Telegram
+                # Send Telegram notification
                 send_telegram_update(game_code, 'game_completed', {
                     'final_score': total_shots
                 })
                 
                 response = {
                     'status': 'game_completed',
-                    'message': '🏆 Игра завершена! Отличная игра!',
+                    'message': '🏆 Game completed! Great game!',
                     'total_holes': len(GOLF_HOLES),
                     'total_shots': total_shots,
                     'final_score': total_shots,
                     'is_success': True
                 }
         else:
-            # Продолжаем текущую лунку
+            # Continue current hole
             cursor.execute('''
                 UPDATE games 
                 SET remaining = ?, accumulated_revolutions = accumulated_revolutions + ?
@@ -727,7 +727,7 @@ def handle_shot_request(game_code, revolutions, device_id, difficulty):
             
             response = {
                 'status': 'continue',
-                'message': f'📊 Осталось: {new_remaining} из {target} (±{tolerance})',
+                'message': f'📊 Remaining: {new_remaining} of {target} (±{tolerance})',
                 'current_hole': current_hole,
                 'remaining': new_remaining,
                 'total_shots': total_shots,
@@ -740,7 +740,7 @@ def handle_shot_request(game_code, revolutions, device_id, difficulty):
         
     except sqlite3.OperationalError as e:
         if "database is locked" in str(e):
-            print("⚠️ База данных заблокирована, пробуем еще раз...")
+            print("⚠️ Database locked, retrying...")
             time.sleep(0.5)
             conn.close()
             time.sleep(0.5)
@@ -749,8 +749,8 @@ def handle_shot_request(game_code, revolutions, device_id, difficulty):
             raise e
             
     except Exception as e:
-        print(f"❌ Критическая ошибка в handle_shot_request: {e}")
-        return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
+        print(f"❌ Critical error in handle_shot_request: {e}")
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
     finally:
         try:
             conn.close()
@@ -759,11 +759,11 @@ def handle_shot_request(game_code, revolutions, device_id, difficulty):
 
 @app.route('/game/<game_code>')
 def game_tracker(game_code):
-    """Веб-страница отслеживания игры в реальном времени"""
+    """Web page for real-time game tracking"""
     conn = sqlite3.connect('golf_league.db')
     cursor = conn.cursor()
     
-    # Получаем информацию об игре
+    # Get game information
     cursor.execute('''
         SELECT game_code, player_name, current_hole, remaining, 
                total_shots, status, created_at, difficulty
@@ -778,7 +778,7 @@ def game_tracker(game_code):
         <!DOCTYPE html>
         <html>
         <head>
-            <title>❌ Игра не найдена</title>
+            <title>❌ Game not found</title>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
@@ -789,10 +789,10 @@ def game_tracker(game_code):
         </head>
         <body>
             <div class="container">
-                <h1>❌ Игра не найдена</h1>
+                <h1>❌ Game not found</h1>
                 <div class="error">
-                    <p>Игра с кодом <strong>''' + game_code + '''</strong> не существует или была удалена.</p>
-                    <p><a href="/">Вернуться на главную</a></p>
+                    <p>Game with code <strong>''' + game_code + '''</strong> doesn't exist or was deleted.</p>
+                    <p><a href="/">Return to home</a></p>
                 </div>
             </div>
         </body>
@@ -800,10 +800,10 @@ def game_tracker(game_code):
         '''
         return error_html, 404
     
-    # Распаковываем данные
+    # Unpack data
     game_code_db, player_name, current_hole, remaining, total_shots, status, created_at, difficulty = game
     
-    # Получаем цель текущей лунки
+    # Get current hole target
     if current_hole <= len(GOLF_HOLES):
         target = GOLF_HOLES[current_hole - 1]
         progress_percent = min(100, int((target - remaining) / target * 100)) if target > 0 else 100
@@ -811,15 +811,15 @@ def game_tracker(game_code):
         target = 0
         progress_percent = 100
     
-    # Получаем название сложности
+    # Get difficulty name
     if difficulty in DIFFICULTY_LEVELS:
         difficulty_name = DIFFICULTY_LEVELS[difficulty]["name"]
         tolerance = DIFFICULTY_LEVELS[difficulty]["tolerance"]
     else:
-        difficulty_name = "Неизвестно"
+        difficulty_name = "Unknown"
         tolerance = 5
     
-    # Получаем последние 10 бросков
+    # Get last 10 shots
     cursor.execute('''
         SELECT hole_number, revolutions, timestamp
         FROM shots 
@@ -832,7 +832,7 @@ def game_tracker(game_code):
     
     conn.close()
     
-    # HTML шаблон с автообновлением
+    # HTML template with auto-refresh
     html = f'''
     <!DOCTYPE html>
     <html>
@@ -840,7 +840,7 @@ def game_tracker(game_code):
         <title>🎮 Spinner Golf - {game_code_db}</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <!-- Автообновление каждые 10 секунд -->
+        <!-- Auto-refresh every 10 seconds -->
         <meta http-equiv="refresh" content="10">
         <style>
             * {{
@@ -1058,37 +1058,37 @@ def game_tracker(game_code):
             <div class="header">
                 <h1>🎮 Spinner Golf</h1>
                 <div class="game-code">{game_code_db}</div>
-                <div class="player-info">Игрок: {player_name}</div>
-                <div class="player-info">Сложность: {difficulty_name} (±{tolerance})</div>
-                <div class="player-info">Создана: {created_at}</div>
+                <div class="player-info">Player: {player_name}</div>
+                <div class="player-info">Difficulty: {difficulty_name} (±{tolerance})</div>
+                <div class="player-info">Created: {created_at}</div>
                 
                 <div class="status-badge status-{status}">
                     {{
-                        '🎯 Активна' if status == 'active' else
-                        '🏆 Завершена' if status == 'completed' else
-                        '⏳ Ожидание' if status == 'pending' else status
+                        '🎯 Active' if status == 'active' else
+                        '🏆 Completed' if status == 'completed' else
+                        '⏳ Pending' if status == 'pending' else status
                     }}
                 </div>
             </div>
             
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-label">Текущая лунка</div>
+                    <div class="stat-label">Current Hole</div>
                     <div class="stat-value">{current_hole}/18</div>
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-label">Осталось оборотов</div>
+                    <div class="stat-label">Remaining Revolutions</div>
                     <div class="stat-value">{remaining}</div>
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-label">Всего ударов</div>
+                    <div class="stat-label">Total Shots</div>
                     <div class="stat-value">{total_shots}</div>
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-label">Цель лунки</div>
+                    <div class="stat-label">Hole Target</div>
                     <div class="stat-value">{target}</div>
                 </div>
             </div>
@@ -1096,43 +1096,43 @@ def game_tracker(game_code):
             {f'''
             <div class="progress-section">
                 <div class="progress-title">
-                    <span>Прогресс лунки {current_hole}</span>
+                    <span>Hole {current_hole} Progress</span>
                     <span>{progress_percent}%</span>
                 </div>
                 <div class="progress-bar">
                     <div class="progress-fill"></div>
                 </div>
                 <div class="hole-info">
-                    🎯 Осталось: {remaining} из {target} оборотов
+                    🎯 Remaining: {remaining} of {target} revolutions
                 </div>
             </div>
             ''' if status == 'active' and current_hole <= 18 else ''}
             
             <div class="shots-history">
-                <div class="shots-title">📈 Последние броски</div>
+                <div class="shots-title">📈 Last Shots</div>
                 {f'''
                 <div class="shots-list">
                     {' '.join([
                         f'''
                         <div class="shot-row">
-                            <div><span class="shot-label">🕳️ Лунка:</span> <span class="shot-value">{hole}</span></div>
-                            <div><span class="shot-label">🌀 Обороты:</span> <span class="shot-value">{rev}</span></div>
-                            <div><span class="shot-label">🕐 Время:</span> <span class="shot-time">{time}</span></div>
+                            <div><span class="shot-label">🕳️ Hole:</span> <span class="shot-value">{hole}</span></div>
+                            <div><span class="shot-label">🌀 Revolutions:</span> <span class="shot-value">{rev}</span></div>
+                            <div><span class="shot-label">🕐 Time:</span> <span class="shot-time">{time}</span></div>
                         </div>
                         ''' for hole, rev, time in shots
-                    ]) if shots else '<p style="text-align: center; color: #888; padding: 20px;">Бросков пока нет</p>'}
+                    ]) if shots else '<p style="text-align: center; color: #888; padding: 20px;">No shots yet</p>'}
                 </div>
                 '''}
             </div>
             
             <div class="footer">
                 <div class="update-info">
-                    🔄 Страница обновляется каждые 10 секунд<br>
-                    Последнее обновление: {datetime.now().strftime("%H:%M:%S")}
+                    🔄 Page refreshes every 10 seconds<br>
+                    Last update: {datetime.now().strftime("%H:%M:%S")}
                 </div>
                 <p style="margin-top: 15px;">
-                    <a href="/" style="color: white; text-decoration: underline;">Главная страница</a> | 
-                    <a href="https://t.me/spinner_golf_bot" style="color: white; text-decoration: underline;">Telegram бот</a>
+                    <a href="/" style="color: white; text-decoration: underline;">Home page</a> | 
+                    <a href="https://t.me/spinner_golf_bot" style="color: white; text-decoration: underline;">Telegram bot</a>
                 </p>
             </div>
         </div>
@@ -1162,38 +1162,38 @@ def game_tracker(game_code):
     
     return html
 
-# ==================== TELEGRAM БОТ ====================
+# ==================== TELEGRAM BOT ====================
 def setup_telegram_bot():
-    """Настройка и запуск Telegram бота"""
+    """Setup and run Telegram bot"""
     if not bot:
-        print("⚠️ Telegram бот не запущен: отсутствует токен")
+        print("⚠️ Telegram bot not started: token missing")
         return
     
     @bot.message_handler(commands=['start', 'help'])
     def send_welcome(message):
         user = message.from_user
         welcome_text = f"""
-🎮 Добро пожаловать в <b>Spinner Golf v3.4</b>, {user.first_name}!
+🎮 Welcome to <b>Spinner Golf v3.4</b>, {user.first_name}!
 
-<b>Упрощенная механика игры:</b>
-• Каждая лунка имеет расстояние (например: 100 оборотов)
-• Крутите спиннер, чтобы уменьшить расстояние до лунки
-• Лунка считается завершенной, когда остаток ≤ tolerance
-• Tolerance зависит от выбранного уровня сложности
+<b>Simplified game mechanics:</b>
+• Each hole has distance (e.g.: 100 revolutions)
+• Spin the spinner to reduce distance to hole
+• Hole is considered completed when remaining ≤ tolerance
+• Tolerance depends on selected difficulty level
 
-🎯 <b>Уровни сложности:</b>
-• 🥳 <b>Новичок</b>: ширина лунки ±10 оборотов
-• 😊 <b>Любитель</b>: ширина лунки ±7 оборотов  
-• 🤔 <b>Профи</b>: ширина лунки ±5 оборотов
-• 😎 <b>Мастер</b>: ширина лунки ±3 оборота
+🎯 <b>Difficulty levels:</b>
+• 🥳 <b>Novice</b>: hole width ±10 revolutions
+• 😊 <b>Amateur</b>: hole width ±7 revolutions  
+• 🤔 <b>Pro</b>: hole width ±5 revolutions
+• 😎 <b>Master</b>: hole width ±3 revolutions
 
-📋 <b>Команды:</b>
-/play - 🎯 Начать новую игру
-/stats - 📊 Моя статистика
-/leaderboard - 🏆 Топ игроков
-/link - 🔗 Получить ссылку для отслеживания
+📋 <b>Commands:</b>
+/play - 🎯 Start new game
+/stats - 📊 My statistics
+/leaderboard - 🏆 Top players
+/link - 🔗 Get tracking link
 
-Удачи! ⛳
+Good luck! ⛳
         """
         bot.reply_to(message, welcome_text, parse_mode='HTML')
     
@@ -1201,19 +1201,19 @@ def setup_telegram_bot():
     def create_game(message):
         user = message.from_user
         
-        # Генерируем код игры
+        # Generate game code
         game_code = generate_game_code()
         
-        # Устанавливаем время истечения
+        # Set expiration time
         expires_at = (datetime.now() + timedelta(hours=GAME_EXPIRE_HOURS)).strftime('%Y-%m-%d %H:%M:%S')
         
-        # Устанавливаем начальный остаток для первой лунки
+        # Set initial remaining for first hole
         first_hole_distance = GOLF_HOLES[0]
         
         conn = sqlite3.connect('golf_league.db', check_same_thread=False)
         cursor = conn.cursor()
         
-        # Создаем новую игру
+        # Create new game
         cursor.execute('''
             INSERT INTO games (game_code, telegram_id, player_name, difficulty, expires_at, remaining)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -1222,59 +1222,59 @@ def setup_telegram_bot():
         conn.commit()
         conn.close()
         
-        # Формируем URL для отслеживания
+        # Form tracking URL
         game_url = f"{SERVER_URL}/game/{game_code}"
         
-        # Отправляем сообщение с инструкцией
+        # Send instruction message
         instructions = f"""
-✅ <b>Игра создана!</b>
+✅ <b>Game created!</b>
 
-🎮 <b>Код игры:</b> <code>{game_code}</code>
+🎮 <b>Game code:</b> <code>{game_code}</code>
 
-📱 <b>Как подключить ESP32:</b>
-1. Переведите ESP32 в режим настройки
-2. Подключитесь к Wi-Fi сети <code>SpinnerGolf-Config</code>
-3. Откройте в браузере <code>192.168.4.1</code>
-4. Выберите уровень сложности
-5. Введите этот код в поле "Код игры"
-6. Сохраните настройки и переведите ESP32 в игровой режим
-7. Нажмите кнопку для начала игры
+📱 <b>How to connect ESP32:</b>
+1. Switch ESP32 to configuration mode
+2. Connect to Wi-Fi network <code>SpinnerGolf-Config</code>
+3. Open in browser <code>192.168.4.1</code>
+4. Select difficulty level
+5. Enter this code in "Game Code" field
+6. Save settings and switch ESP32 to game mode
+7. Press button to start game
 
-🎯 <b>Уровни сложности в настройках ESP32:</b>
-• 🥳 <b>Новичок</b>: ширина лунки ±10 оборотов
-• 😊 <b>Любитель</b>: ширина лунки ±7 оборотов
-• 🤔 <b>Профи</b>: ширина лунки ±5 оборотов
-• 😎 <b>Мастер</b>: ширина лунки ±3 оборота
+🎯 <b>Difficulty levels in ESP32 settings:</b>
+• 🥳 <b>Novice</b>: hole width ±10 revolutions
+• 😊 <b>Amateur</b>: hole width ±7 revolutions
+• 🤔 <b>Pro</b>: hole width ±5 revolutions
+• 😎 <b>Master</b>: hole width ±3 revolutions
 
-🌐 <b>Отслеживать игру онлайн:</b>
+🌐 <b>Track game online:</b>
 {game_url}
 
-📱 <b>Поделитесь ссылкой</b> с друзьями, чтобы они следили за вашим прогрессом!
+📱 <b>Share this link</b> with friends so they can follow your progress!
 
-⏰ <b>Код действителен:</b> {GAME_EXPIRE_HOURS} часов
-🏌️ <b>Количество лунок:</b> {len(GOLF_HOLES)}
-⛳ <b>Первая лунка:</b> {first_hole_distance} оборотов
+⏰ <b>Code valid for:</b> {GAME_EXPIRE_HOURS} hours
+🏌️ <b>Number of holes:</b> {len(GOLF_HOLES)}
+⛳ <b>First hole:</b> {first_hole_distance} revolutions
 
-<b>Механика игры:</b>
-• Лунка 1: {first_hole_distance} оборотов
-• Крутите спиннер, чтобы уменьшить расстояние до лунки
-• Лунка завершена, когда остаток ≤ выбранный tolerance
-• Цель: пройти все 18 лунок за минимальное количество ударов!
+<b>Game mechanics:</b>
+• Hole 1: {first_hole_distance} revolutions
+• Spin the spinner to reduce distance to hole
+• Hole completed when remaining ≤ selected tolerance
+• Goal: complete all 18 holes in minimum number of shots!
 
-Удачи! 🚀
+Good luck! 🚀
         """
         
         bot.reply_to(message, instructions, parse_mode='HTML')
     
     @bot.message_handler(commands=['link'])
     def send_game_link(message):
-        """Отправляет ссылку на отслеживание текущей игры"""
+        """Send tracking link for current game"""
         user = message.from_user
         
         conn = sqlite3.connect('golf_league.db', check_same_thread=False)
         cursor = conn.cursor()
         
-        # Ищем активную игру пользователя
+        # Find user's active game
         cursor.execute('''
             SELECT game_code, status 
             FROM games 
@@ -1290,24 +1290,24 @@ def setup_telegram_bot():
             game_url = f"{SERVER_URL}/game/{game_code}"
             
             if status == 'active':
-                status_text = "активна"
+                status_text = "active"
             else:
-                status_text = "ожидает начала"
+                status_text = "pending start"
             
             response = f"""
-🔗 <b>Ссылка для отслеживания игры:</b>
+🔗 <b>Game tracking link:</b>
 
 {game_url}
 
-🎮 <b>Код игры:</b> <code>{game_code}</code>
-📊 <b>Статус:</b> {status_text}
+🎮 <b>Game code:</b> <code>{game_code}</code>
+📊 <b>Status:</b> {status_text}
 
-📱 <b>Поделитесь этой ссылкой</b> с друзьями, чтобы они могли следить за вашим прогрессом в реальном времени!
+📱 <b>Share this link</b> with friends so they can track your progress in real time!
 
-<i>Страница обновляется автоматически каждые 10 секунд.</i>
+<i>Page updates automatically every 10 seconds.</i>
 """
         else:
-            response = "У вас нет активной игры. Начните новую игру командой /play"
+            response = "You don't have an active game. Start new game with /play"
         
         conn.close()
         bot.reply_to(message, response, parse_mode='HTML')
@@ -1335,36 +1335,36 @@ def setup_telegram_bot():
             
             cursor.execute('SELECT AVG(total_score) FROM leaderboard WHERE telegram_id = ?', (user.id,))
             avg_score_result = cursor.fetchone()[0]
-            avg_score = f"{avg_score_result:.1f}" if avg_score_result else "Нет данных"
+            avg_score = f"{avg_score_result:.1f}" if avg_score_result else "No data"
             
             if last_played:
                 last_played_date = parse_datetime(last_played)
                 if last_played_date:
                     last_played_str = last_played_date.strftime("%d.%m.%Y %H:%M")
                 else:
-                    last_played_str = "Неизвестно"
+                    last_played_str = "Unknown"
             else:
-                last_played_str = "Еще не играли"
+                last_played_str = "Haven't played yet"
             
             stats_text = f"""
-📊 <b>Статистика</b>
+📊 <b>Statistics</b>
 
-👤 <b>Игрок:</b> {user.first_name}
-🎮 <b>Всего игр:</b> {total_games}
-✅ <b>Завершено игр:</b> {completed_games}
-🏌️ <b>Всего бросков:</b> {total_shots}
-🎯 <b>Лучший результат:</b> {best_score if best_score != 999 else "Нет"}
-📈 <b>Средний счет:</b> {avg_score}
-🏆 <b>В топе:</b> {leaderboard_entries} раз
-📅 <b>Последняя игра:</b> {last_played_str}
+👤 <b>Player:</b> {user.first_name}
+🎮 <b>Total games:</b> {total_games}
+✅ <b>Completed games:</b> {completed_games}
+🏌️ <b>Total shots:</b> {total_shots}
+🎯 <b>Best score:</b> {best_score if best_score != 999 else "None"}
+📈 <b>Average score:</b> {avg_score}
+🏆 <b>In top:</b> {leaderboard_entries} times
+📅 <b>Last game:</b> {last_played_str}
             """
         else:
             stats_text = """
-📊 <b>Статистика</b>
+📊 <b>Statistics</b>
 
-У вас еще нет статистики! 🎮
+You don't have statistics yet! 🎮
 
-Начните игру командой /play
+Start game with /play
             """
         
         conn.close()
@@ -1387,7 +1387,7 @@ def setup_telegram_bot():
         leaders = cursor.fetchall()
         
         if leaders:
-            leaderboard_text = "<b>🏆 ТОП-10 ИГРОКОВ</b>\n\n"
+            leaderboard_text = "<b>🏆 TOP-10 PLAYERS</b>\n\n"
             
             for i, (first_name, best_score, games_played) in enumerate(leaders, 1):
                 medal = ""
@@ -1395,46 +1395,49 @@ def setup_telegram_bot():
                 elif i == 2: medal = "🥈 "
                 elif i == 3: medal = "🥉 "
                 
-                leaderboard_text += f"{medal}{i}. {first_name}: {best_score} ({games_played} игр)\n"
+                leaderboard_text += f"{medal}{i}. {first_name}: {best_score} ({games_played} games)\n"
             
-            leaderboard_text += f"\nВсего игроков в рейтинге: {len(leaders)}"
+            leaderboard_text += f"\nTotal players in ranking: {len(leaders)}"
         else:
             leaderboard_text = """
-🏆 <b>ТОП ИГРОКОВ</b>
+🏆 <b>TOP PLAYERS</b>
 
-Рейтинг пока пуст! 🎮
+Ranking is empty! 🎮
 
-Будьте первым, кто попадет в таблицу лидеров!
+Be first to get on the leaderboard!
             """
         
         conn.close()
         bot.reply_to(message, leaderboard_text, parse_mode='HTML')
     
-    # Запускаем бота
-    print("🤖 Telegram бот запущен")
+    # Start bot
+    print("🤖 Telegram bot started")
     bot.polling(none_stop=True)
 
-# ==================== ЗАПУСК СЕРВЕРА ====================
+# ==================== SERVER START ====================
 def start_telegram_bot():
-    """Запуск Telegram бота в отдельном потоке"""
+    """Start Telegram bot in separate thread"""
     if TELEGRAM_TOKEN:
         try:
             setup_telegram_bot()
         except Exception as e:
-            print(f"❌ Ошибка запуска Telegram бота: {e}")
+            print(f"❌ Telegram bot startup error: {e}")
     else:
-        print("⚠️ Telegram бот не запущен: токен не указан")
+        print("⚠️ Telegram bot not started: token not specified")
 
 if __name__ == '__main__':
     init_database()
     
-    # Запускаем Telegram бота
+    # Start Telegram bot
     if TELEGRAM_TOKEN:
         bot_thread = threading.Thread(target=start_telegram_bot, daemon=True)
         bot_thread.start()
-        print("🤖 Telegram бот запущен в отдельном потоке")
+        print("🤖 Telegram bot started in separate thread")
     
-    # Запускаем Flask сервер
+    # Start Flask server
     port = int(os.environ.get('PORT', 10000))
-    print(f"🚀 Flask сервер запущен на порту {port}")
+    print(f"🚀 Flask server started on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
+   
+
+
